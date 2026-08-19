@@ -18,7 +18,7 @@ defmodule PhoenixAnalytics.Queries.Analytics.Charts.Visits do
   def visits_per_period(from_date, to_date, interval \\ "day")
       when interval in @valid_intervals do
     # Build query with database-specific logic
-    database_type = PhoenixAnalytics.Services.Utility.database_type()
+    database_type = PhoenixAnalytics.Store.Ecto.database_type()
 
     RequestLog
     |> Helpers.exclude_non_page()
