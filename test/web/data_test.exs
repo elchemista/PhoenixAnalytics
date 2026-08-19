@@ -34,6 +34,23 @@ defmodule PhoenixAnalytics.Web.DataTest do
 
       assert Data.stat(:total_requests, %{from: "2020-01-01", to: "2020-01-02"}) == 0
     end
+
+    test "falls back to zero when the store raises" do
+      Application.put_env(:phoenix_analytics, :store, {__MODULE__.RaisingStore, []})
+
+      assert Data.stat(:total_requests, %{from: "2021-01-01", to: "2021-01-02"}) == 0
+    end
+
+    test "a failed read is not cached, so the next one retries" do
+      Application.put_env(:phoenix_analytics, :store, {__MODULE__.BrokenStore, []})
+      range = %{from: "2022-01-01", to: "2022-01-02"}
+      assert Data.stat(:total_requests, range) == 0
+
+      Application.put_env(:phoenix_analytics, :store, {PhoenixAnalytics.Store.ETS, table: @table})
+
+      assert Data.stat(:total_requests, @range) == 5
+      assert Data.stat(:total_requests, range) == 0
+    end
   end
 
   describe "stat_series/2" do
@@ -42,6 +59,28 @@ defmodule PhoenixAnalytics.Web.DataTest do
                %{"date" => "2025-01-14", "hits" => 2},
                %{"date" => "2025-01-15", "hits" => 3}
              ]
+    end
+  end
+
+  describe "cache failures" do
+    test "a cache outage falls back to the default instead of rendering the error" do
+      # Without an :error clause the reason itself, :no_cache, would reach the
+      # chart as if it were data.
+      :ok = Supervisor.terminate_child(PhoenixAnalytics.Application, Cachex)
+      on_exit(fn -> Supervisor.restart_child(PhoenixAnalytics.Application, Cachex) end)
+
+      assert {:error, :no_cache} = Cache.fetch("probe", fn -> [] end)
+
+      assert Data.stat(:total_requests, @range) == 0
+      assert Data.stat_series(:total_requests, @range) == []
+      assert Data.chart(:visits, @range, "day") == []
+      assert Data.chart({:popular, :pages}, @range) == []
+    end
+
+    test "a cached Cachex error is not rendered either" do
+      Cachex.put(Cache.name(), "stat:total_requests:#{@range.from}:#{@range.to}", %Cachex.Error{})
+
+      assert Data.stat(:total_requests, @range) == 0
     end
   end
 

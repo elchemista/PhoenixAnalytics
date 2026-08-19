@@ -135,9 +135,12 @@ defmodule PhoenixAnalytics.Web.Data do
     end)
   end
 
+  # A cache failure must not reach the dashboard as if it were data: without the
+  # `:error` clause the reason itself, such as `:no_cache`, would be rendered.
   @spec cached(String.t(), term(), (-> {:ok, term()} | {:error, term()})) :: term()
   defp cached(key, default, read) do
     case Cache.fetch(key, fn -> run(read, default) end) do
+      {:error, _reason} -> default
       {_status, %Cachex.Error{}} -> default
       {_status, value} -> value
     end
