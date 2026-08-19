@@ -1,7 +1,7 @@
 defmodule PhoenixAnalytics.MixProject do
   use Mix.Project
 
-  @version "0.4.2"
+  @version "0.5.0"
 
   def project do
     [
@@ -66,6 +66,9 @@ defmodule PhoenixAnalytics.MixProject do
       {:telemetry, "~> 1.2"},
       {:live_react, "~> 1.1"},
       {:phoenix_live_view, "~> 1.1"},
+      # Optional: enables PhoenixAnalytics.Snapshot.Sink.S3
+      {:ex_aws, "~> 2.5", optional: true},
+      {:ex_aws_s3, "~> 2.5", optional: true},
       # --- dev deps ---
       {:ex_doc, "~> 0.33", only: :dev},
       {:esbuild, "~> 0.8", only: :dev, runtime: false},
@@ -73,17 +76,37 @@ defmodule PhoenixAnalytics.MixProject do
       # Database adapters for development and testing
       {:postgrex, "~> 0.17", only: [:dev, :test]},
       {:ecto_sqlite3, "~> 0.12", only: [:dev, :test]},
-      {:myxql, "~> 0.6", only: [:dev, :test]}
+      {:myxql, "~> 0.6", only: [:dev, :test]},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
   defp groups_for_modules do
     [
       Integrations: [
-        PhoenixAnalytics.Plugs.RequestTracker
+        PhoenixAnalytics.Plugs.RequestTracker,
+        PhoenixAnalytics.Plugs
+      ],
+      Stores: [
+        PhoenixAnalytics.Store,
+        PhoenixAnalytics.Store.Ecto,
+        PhoenixAnalytics.Store.ETS,
+        PhoenixAnalytics.Store.ETS.Aggregate,
+        PhoenixAnalytics.Store.Query,
+        PhoenixAnalytics.Store.Bucket
+      ],
+      Snapshots: [
+        PhoenixAnalytics.Snapshot,
+        PhoenixAnalytics.Snapshot.Scheduler,
+        PhoenixAnalytics.Snapshot.Sink,
+        PhoenixAnalytics.Snapshot.Sink.Local,
+        PhoenixAnalytics.Snapshot.Sink.S3,
+        PhoenixAnalytics.Snapshot.Format
       ],
       Entities: [
-        PhoenixAnalytics.Entities.RequestLog
+        PhoenixAnalytics.Entities.RequestLog,
+        PhoenixAnalytics.Filters
       ],
       Dashboard: [
         PhoenixAnalytics.Web.Router
