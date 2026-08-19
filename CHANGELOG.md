@@ -2,6 +2,68 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0]
+
+### ✨ New Features
+
+- **Pluggable stores**: storage now sits behind the `PhoenixAnalytics.Store`
+  behaviour. Configure it with `store: {Module, opts}`, or keep using `repo:`
+  which selects the Ecto store automatically.
+- **ETS store**: `PhoenixAnalytics.Store.ETS` keeps analytics in node memory,
+  with retention by age (`:retention_days`) and by size (`:max_entries`), and
+  needs no database or migration.
+- **Snapshots**: `PhoenixAnalytics.Snapshot` exports a period to a sink on a
+  schedule and restores it at boot. Ships with a local filesystem sink and an S3
+  sink (optional ExAws dependency), in `:etf` or `:jsonl` format.
+- **Extensible tracking plug**: `PhoenixAnalytics.Plugs.RequestTracker` accepts
+  `:before` and `:after` plugs, `:filter`, `:transform`, `:ignore_paths` and
+  `:session` options, plus `PhoenixAnalytics.Plugs.skip/1` and `put_meta/3` for
+  custom plugs.
+- **Telemetry**: new `[:phoenix_analytics, :request, :tracked]` and
+  `[:phoenix_analytics, :request, :skipped]` events, and
+  `[:phoenix_analytics, :snapshot, :start | :stop | :exception]`.
+- **Batcher configuration**: `batcher: [batch_size: 100, flush_interval_ms: 1_000]`.
+
+### 🐛 Bug Fixes
+
+- Stat card sparklines were always empty: the dashboard matched query results as
+  lists while they are maps.
+- Period labels are now consistent across backends. PostgreSQL returned
+  `Date`/`NaiveDateTime` structs where SQLite and MySQL returned strings.
+- Failed dashboard reads are no longer cached, so the next render retries
+  instead of showing the fallback until the TTL expires.
+- `:cache_ttl` is now read at runtime instead of at compile time, so it can be
+  set from `config/runtime.exs`, and a string value such as
+  `System.get_env("CACHE_TTL")` no longer crashes on every cache write.
+
+### 🔧 Improvements
+
+- Dashboard reads go through a single `PhoenixAnalytics.Web.Data` module instead
+  of the same cache, query and error handling code repeated in seven components.
+- Request classification rules live in `PhoenixAnalytics.Filters` and are shared
+  by every store, so all backends agree on what a pageview is.
+- Request log construction moved to `PhoenixAnalytics.Tracking.RequestLogBuilder`.
+
+### ⚠️ Behaviour notes
+
+- `PhoenixAnalytics.Config.get_cache_ttl/0` is now the single source of the
+  cache TTL and its default is `120` seconds, the value the cache used before.
+
+### ⚠️ Deprecations
+
+- `PhoenixAnalytics.Services.Utility.database_type/0` and `mode/0`: use
+  `PhoenixAnalytics.Store.Ecto.database_type/0`.
+
+### 🧹 Removals
+
+- `PhoenixAnalytics.Queries.Insert` and `PhoenixAnalytics.Queries.Table`, which
+  were unused.
+
+> No breaking changes: an existing `repo:` configuration and a bare
+> `plug PhoenixAnalytics.Plugs.RequestTracker` behave exactly as in 0.4.
+
+---
+
 ## [0.4.0] - 14-08-2025
 
 ### 🚨 BREAKING CHANGES
