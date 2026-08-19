@@ -81,6 +81,28 @@ defmodule PhoenixAnalytics.Store.Query do
     end
   end
 
+  @doc """
+  Returns true when the inputs form a range this module can build.
+
+  Meant for primary adapters, such as the dashboard LiveView, that receive
+  dates from a client and must not pass unparseable values downstream.
+
+  ## Examples
+
+      iex> PhoenixAnalytics.Store.Query.valid?("2025-01-14", "2025-01-15")
+      true
+
+      iex> PhoenixAnalytics.Store.Query.valid?("yesterday", "today")
+      false
+  """
+  @spec valid?(term(), term()) :: boolean()
+  def valid?(from, to) do
+    new(from, to)
+    true
+  rescue
+    _error -> false
+  end
+
   @spec interval!(interval() | String.t()) :: interval()
   defp interval!(interval) when interval in @intervals, do: interval
 
