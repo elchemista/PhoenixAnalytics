@@ -182,13 +182,14 @@ defmodule PhoenixAnalytics.Store.Ecto do
       logs
       |> Stream.chunk_every(@import_chunk_size)
       |> Enum.reduce(0, fn chunk, acc ->
-        {inserted, _returned} =
-          repo.insert_all(RequestLog, Enum.map(chunk, &to_row/1),
-            returning: false,
-            on_conflict: :nothing
-          )
+        repo.insert_all(RequestLog, Enum.map(chunk, &to_row/1),
+          returning: false,
+          on_conflict: :nothing
+        )
 
-        acc + inserted
+        # Logs already present are counted too, so a replay reports the same
+        # number as the first import, exactly like the in-memory store.
+        acc + length(chunk)
       end)
 
     {:ok, count}

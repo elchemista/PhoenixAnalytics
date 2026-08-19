@@ -14,6 +14,11 @@ defmodule PhoenixAnalytics.Store.ETS do
   Memory grows with traffic, roughly 0.5-1 KB per request. `:retention_days`
   and `:max_entries` bound it, and `info/1` reports the current usage.
 
+  Logs are keyed by timestamp and request id, where the Ecto store keys them by
+  request id alone. Re-importing a snapshot is therefore idempotent, since the
+  timestamp is preserved, but the same request id stored under two different
+  timestamps would be kept twice.
+
   ## Options
 
     * `:table` - name of the ETS table. Defaults to `:phoenix_analytics_requests`.

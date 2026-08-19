@@ -96,7 +96,12 @@ defmodule PhoenixAnalytics.Store do
               {:ok, result} | {:error, term()}
             when result: term()
 
-  @doc "Inserts previously exported logs back into the store, idempotently."
+  @doc """
+  Inserts previously exported logs back into the store, idempotently.
+
+  Returns how many logs were imported, counting those the store already held,
+  so the number is the same on every adapter and on every replay.
+  """
   @callback import_all(Enumerable.t(), opts()) :: {:ok, non_neg_integer()} | {:error, term()}
 
   @doc "Deletes every log older than the given point in time."

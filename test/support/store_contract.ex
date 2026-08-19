@@ -257,11 +257,14 @@ defmodule PhoenixAnalytics.StoreContract do
           assert Enum.all?(logs, &match?(%PhoenixAnalytics.Entities.RequestLog{}, &1))
         end
 
-        test "import is idempotent" do
+        test "import is idempotent and reports the same count on replay" do
           {:ok, logs} = @store.export(range(), &Enum.to_list/1, @store_opts)
-          {:ok, _count} = @store.import_all(logs, @store_opts)
+
+          assert {:ok, 5} = @store.import_all(logs, @store_opts)
+          assert {:ok, 5} = @store.import_all(logs, @store_opts)
 
           assert {:ok, 3} = @store.stat(:total_requests, day(Fixtures.today()), @store_opts)
+          assert %{count: 7} = @store.info(@store_opts)
         end
 
         test "prune deletes older logs" do

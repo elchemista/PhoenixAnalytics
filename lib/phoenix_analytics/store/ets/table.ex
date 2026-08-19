@@ -116,9 +116,14 @@ defmodule PhoenixAnalytics.Store.ETS.Table do
     end)
   end
 
+  # Reported at second precision, the same as every stored `inserted_at`, so the
+  # two can be compared directly.
   @spec key_timestamp(key() | :"$end_of_table") :: NaiveDateTime.t() | nil
   defp key_timestamp({milliseconds, _request_id}) do
-    milliseconds |> DateTime.from_unix!(:millisecond) |> DateTime.to_naive()
+    milliseconds
+    |> DateTime.from_unix!(:millisecond)
+    |> DateTime.to_naive()
+    |> NaiveDateTime.truncate(:second)
   end
 
   defp key_timestamp(:"$end_of_table"), do: nil
