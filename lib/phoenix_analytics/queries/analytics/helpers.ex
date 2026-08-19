@@ -8,9 +8,11 @@ defmodule PhoenixAnalytics.Queries.Helpers do
 
   import Ecto.Query
 
-  @static ~w(.js .css .png .jpg .jpeg .svg .gif .woff .woff2 .ttf .ico .txt .xml)
-  @paths ~w(/uploads/ /assets/ /images/ /css/ /js/ /fonts/ /favicon.ico)
-  @dev ~w(/phoenix/live_reload/ /dev/)
+  alias PhoenixAnalytics.Filters
+  alias PhoenixAnalytics.Store.Query
+
+  @day_start ~T[00:00:00]
+  @day_end ~T[23:59:59]
 
   @doc """
   Excludes non-page requests (static files, assets, etc.) from a query.
@@ -72,71 +74,42 @@ defmodule PhoenixAnalytics.Queries.Helpers do
 
   # Private helper functions
 
+  @spec exclude_static_files(Ecto.Queryable.t()) :: Ecto.Query.t()
   defp exclude_static_files(query) do
-    Enum.reduce(@static, query, fn ext, q ->
+    Enum.reduce(Filters.static_extensions(), query, fn ext, q ->
       from(r in q, where: not like(r.path, ^"%#{ext}"))
     end)
   end
 
+  @spec exclude_asset_paths(Ecto.Queryable.t()) :: Ecto.Query.t()
   defp exclude_asset_paths(query) do
-    Enum.reduce(@paths, query, fn path, q ->
+    Enum.reduce(Filters.asset_paths(), query, fn path, q ->
       from(r in q, where: not like(r.path, ^"%#{path}%"))
     end)
   end
 
+  @spec exclude_dev_paths(Ecto.Queryable.t()) :: Ecto.Query.t()
   defp exclude_dev_paths(query) do
-    Enum.reduce(@dev, query, fn path, q ->
+    Enum.reduce(Filters.dev_paths(), query, fn path, q ->
       from(r in q, where: not like(r.path, ^"%#{path}%"))
     end)
   end
 
+  @spec filter_from_date(Ecto.Queryable.t(), Query.date_input() | nil) :: Ecto.Queryable.t()
   defp filter_from_date(query, nil), do: query
 
   defp filter_from_date(query, from_date) do
-    # Convert Date to NaiveDateTime if needed
-    naive_from_date =
-      case from_date do
-        %Date{} -> NaiveDateTime.new!(from_date, ~T[00:00:00])
-        %NaiveDateTime{} -> from_date
-        date_string when is_binary(date_string) ->
-          case NaiveDateTime.from_iso8601(date_string) do
-            {:ok, naive_dt} -> naive_dt
-            {:error, _} ->
-              # Try parsing as date only first, then add time
-              case Date.from_iso8601(String.slice(date_string, 0, 10)) do
-                {:ok, date} -> NaiveDateTime.new!(date, ~T[00:00:00])
-                {:error, _} -> from_date
-              end
-          end
-        _ -> from_date
-      end
+    from_date = Query.to_naive!(from_date, @day_start)
 
-    from(r in query, where: r.inserted_at >= ^naive_from_date)
+    from(r in query, where: r.inserted_at >= ^from_date)
   end
 
+  @spec filter_to_date(Ecto.Queryable.t(), Query.date_input() | nil) :: Ecto.Queryable.t()
   defp filter_to_date(query, nil), do: query
 
   defp filter_to_date(query, to_date) do
-    # Convert Date to NaiveDateTime if needed
-    naive_to_date =
-      case to_date do
-        %Date{} -> NaiveDateTime.new!(to_date, ~T[23:59:59])
-        %NaiveDateTime{} -> to_date
-        date_string when is_binary(date_string) ->
-          case NaiveDateTime.from_iso8601(date_string) do
-            {:ok, naive_dt} -> naive_dt
-            {:error, _} ->
-              # Try parsing as date only first, then add time
-              case Date.from_iso8601(String.slice(date_string, 0, 10)) do
-                {:ok, date} -> NaiveDateTime.new!(date, ~T[23:59:59])
-                {:error, _} -> to_date
-              end
-          end
-        _ -> to_date
-      end
+    to_date = Query.to_naive!(to_date, @day_end)
 
-    from(r in query, where: r.inserted_at <= ^naive_to_date)
+    from(r in query, where: r.inserted_at <= ^to_date)
   end
-
-
 end
