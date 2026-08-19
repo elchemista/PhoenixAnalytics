@@ -27,7 +27,8 @@ defmodule PhoenixAnalytics.Snapshot.Scheduler do
   alias PhoenixAnalytics.Snapshot
   alias PhoenixAnalytics.Store
 
-  @defaults [every: :day, at: ~T[03:00:00], window: :previous_day, run_on: :all]
+  @default_at ~T[03:00:00]
+  @defaults [every: :day, at: @default_at, window: :previous_day, run_on: :all]
 
   @type state :: map()
 
@@ -51,7 +52,7 @@ defmodule PhoenixAnalytics.Snapshot.Scheduler do
   @doc false
   @impl GenServer
   def init(opts) do
-    state = opts |> Map.new() |> Map.put(:last_to, nil)
+    state = opts |> Map.new() |> Map.put(:last_to, nil) |> validate_schedule()
     restore_async(state)
 
     {:ok, schedule(state)}
@@ -97,6 +98,37 @@ defmodule PhoenixAnalytics.Snapshot.Scheduler do
   end
 
   defp restore_async(_state), do: :ok
+
+  # A malformed schedule must not take the host application down: unsupervisable
+  # values would crash init/1 in a loop, and a zero interval would busy loop
+  # writing snapshots, so both fall back to the defaults with a warning.
+  @spec validate_schedule(state()) :: state()
+  defp validate_schedule(state), do: %{state | every: every(state.every), at: at(state.at)}
+
+  @spec every(term()) :: :manual | :day | {:hours, pos_integer()} | {:minutes, pos_integer()}
+  defp every(:manual), do: :manual
+  defp every(:day), do: :day
+  defp every({:hours, hours} = every) when is_integer(hours) and hours > 0, do: every
+  defp every({:minutes, minutes} = every) when is_integer(minutes) and minutes > 0, do: every
+
+  defp every(other) do
+    Logger.warning(
+      "PhoenixAnalytics ignoring invalid snapshot :every #{inspect(other)}, using :day"
+    )
+
+    :day
+  end
+
+  @spec at(term()) :: Time.t()
+  defp at(%Time{} = at), do: at
+
+  defp at(other) do
+    Logger.warning(
+      "PhoenixAnalytics ignoring invalid snapshot :at #{inspect(other)}, using #{@default_at}"
+    )
+
+    @default_at
+  end
 
   @spec schedule(state()) :: state()
   defp schedule(%{every: :manual} = state), do: state
