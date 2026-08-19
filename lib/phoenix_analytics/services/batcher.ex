@@ -1,13 +1,11 @@
 defmodule PhoenixAnalytics.Services.Batcher do
   @moduledoc """
-  A GenServer module for batching and inserting RequestLog entries into the database.
+  Batches `PhoenixAnalytics.Entities.RequestLog` entries before writing them to
+  the configured store.
 
-  This module provides functionality to efficiently insert RequestLog entries by batching them
-  and inserting them in bulk. It uses a GenServer to manage the state of the batch and
-  periodically flush the batch to the database.
-
-  The batch is processed and inserted into the database either when it reaches 1_000 logs
-  or after 1 second, whichever comes first.
+  Logs arrive one per request, but storage is far more efficient in bulk. This
+  GenServer accumulates them and flushes either when the batch is full or after
+  the flush interval elapses, whichever comes first.
 
   ## Usage
 
@@ -17,29 +15,42 @@ defmodule PhoenixAnalytics.Services.Batcher do
 
   Alternatively, you can send an event to PubSub for request_log insertion:
 
-      PhoenixAnalytics.Services.PubSub.broadcast(:request_sent, %PhoenixAnalytics.Entities.RequestLog{})
+      PhoenixAnalytics.Services.PubSub.broadcast(%PhoenixAnalytics.Entities.RequestLog{})
 
-  The module will handle batching and inserting the logs automatically.
-  This approach allows for handling distributed app scenarios.
+  ## Configuration
+
+      config :phoenix_analytics,
+        batcher: [batch_size: 100, flush_interval_ms: 1_000]
   """
 
   use GenServer
 
+  alias PhoenixAnalytics.Config
+  alias PhoenixAnalytics.Entities.RequestLog
   alias PhoenixAnalytics.Services.PubSub
+  alias PhoenixAnalytics.Services.Telemetry
+  alias PhoenixAnalytics.Store
 
-  @batch_size 100
-  @timeout 1_000
+  @type state :: %{
+          batch: [RequestLog.t()],
+          batch_size: pos_integer(),
+          flush_interval_ms: pos_integer(),
+          last_insert_time: integer()
+        }
 
   # --- client callbacks ---
 
   @doc false
-  def start_link(_) do
+  @spec start_link(term()) :: GenServer.on_start()
+  def start_link(_opts) do
     GenServer.start_link(__MODULE__, %{}, name: __MODULE__)
   end
 
   @doc """
   Inserts a RequestLog into the batch queue.
-  The batch is processed and inserted into the database either when it reaches 1_000 logs or after 1 second, whichever comes first.
+
+  The batch is flushed once it reaches the configured size or once the flush
+  interval elapses, whichever comes first.
 
   ## Parameters
 
@@ -48,12 +59,15 @@ defmodule PhoenixAnalytics.Services.Batcher do
   ## Examples
 
       iex> PhoenixAnalytics.Services.Batcher.insert(%PhoenixAnalytics.Entities.RequestLog{})
+      :ok
 
   Note: You can also use PubSub to insert a RequestLog, which is useful for distributed app scenarios:
 
-      iex> PhoenixAnalytics.Services.PubSub.broadcast(:request_sent, %PhoenixAnalytics.Entities.RequestLog{})
+      iex> PhoenixAnalytics.Services.PubSub.broadcast(%PhoenixAnalytics.Entities.RequestLog{})
+      :ok
 
   """
+  @spec insert(RequestLog.t()) :: :ok
   def insert(request_log) do
     GenServer.cast(__MODULE__, {:insert, request_log})
   end
@@ -61,51 +75,57 @@ defmodule PhoenixAnalytics.Services.Batcher do
   # --- server callbacks ---
 
   @doc false
-  @impl true
-  def init(_state) do
+  @impl GenServer
+  def init(_args) do
     PubSub.subscribe()
 
-    :timer.send_interval(@timeout, :check_batch)
-    {:ok, %{batch: [], last_insert_time: :os.system_time(:millisecond)}}
+    options = Config.batcher()
+    flush_interval_ms = Keyword.fetch!(options, :flush_interval_ms)
+    :timer.send_interval(flush_interval_ms, :check_batch)
+
+    {:ok,
+     %{
+       batch: [],
+       batch_size: Keyword.fetch!(options, :batch_size),
+       flush_interval_ms: flush_interval_ms,
+       last_insert_time: :os.system_time(:millisecond)
+     }}
   end
 
   @doc false
-  @impl true
+  @impl GenServer
   def handle_cast({:insert, request_log}, state) do
-    new_batch = [request_log | state.batch]
+    batch = [request_log | state.batch]
 
-    if length(new_batch) >= @batch_size do
-      send_batch(new_batch)
-
-      {:noreply, %{state | batch: [], last_insert_time: :os.system_time(:millisecond)}}
+    if length(batch) >= state.batch_size do
+      {:noreply, flush(%{state | batch: batch})}
     else
-      {:noreply, %{state | batch: new_batch}}
+      {:noreply, %{state | batch: batch}}
     end
   end
 
   @doc false
-  @impl true
+  @impl GenServer
   def handle_info({:request_sent, request_log}, state) do
     GenServer.cast(__MODULE__, {:insert, request_log})
     {:noreply, state}
   end
 
-  @doc false
-  @impl true
   def handle_info(:check_batch, state) do
-    current_time = :os.system_time(:millisecond)
-    time_diff = current_time - state.last_insert_time
+    elapsed = :os.system_time(:millisecond) - state.last_insert_time
 
-    if time_diff >= @timeout && length(state.batch) > 0 do
-      send_batch(state.batch)
-      {:noreply, %{state | batch: [], last_insert_time: current_time}}
+    if elapsed >= state.flush_interval_ms and match?([_ | _], state.batch) do
+      {:noreply, flush(state)}
     else
       {:noreply, state}
     end
   end
 
   @doc """
-  Sends a batch of RequestLogs to be inserted into the database.
+  Sends a batch of RequestLogs to the configured store.
+
+  Logs are written in insertion order. Failures are reported through telemetry
+  and never crash the host application.
 
   ## Parameters
 
@@ -113,25 +133,27 @@ defmodule PhoenixAnalytics.Services.Batcher do
 
   ## Examples
 
-      iex> PhoenixAnalytics.Services.Batcher.send_batch([%PhoenixAnalytics.Entities.RequestLog{}, %PhoenixAnalytics.Entities.RequestLog{}])
+      iex> PhoenixAnalytics.Services.Batcher.send_batch([])
+      :ok
 
   """
-  def send_batch([]), do: []
+  @spec send_batch([RequestLog.t()]) :: :ok
+  def send_batch([]), do: :ok
 
   def send_batch(batch) do
-    repo = PhoenixAnalytics.Config.get_repo()
+    case Store.insert_all(batch) do
+      :ok -> :ok
+      {:error, reason} -> Telemetry.log_error(:insert_batch, reason)
+    end
 
-    # Convert structs to maps for insert_all
-    data =
-      Enum.map(batch, fn request_log ->
-        request_log
-        |> Map.from_struct()
-        # Remove Ecto metadata
-        |> Map.drop([:__meta__])
-        # Set inserted_at timestamp (truncate to seconds precision)
-        |> Map.put(:inserted_at, NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second))
-      end)
+    :ok
+  end
 
-    repo.insert_all(PhoenixAnalytics.Entities.RequestLog, data, returning: false)
+  # The batch is accumulated by prepending, so it is reversed before writing.
+  @spec flush(state()) :: state()
+  defp flush(state) do
+    state.batch |> Enum.reverse() |> send_batch()
+
+    %{state | batch: [], last_insert_time: :os.system_time(:millisecond)}
   end
 end
