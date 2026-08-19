@@ -65,6 +65,44 @@ defmodule PhoenixAnalytics.Plugs.RequestTrackerTest do
     end
   end
 
+  describe "hostile session cookies" do
+    test "a non numeric page views cookie does not break the request" do
+      conn = request("/home", cookies: %{"pa_page_views" => "abc"})
+
+      assert conn.status == 200
+      assert resp_cookies(conn)["pa_page_views"].value == "1"
+      assert_receive {:request_sent, %RequestLog{session_page_views: 1}}
+    end
+
+    test "an empty page views cookie does not break the request" do
+      conn = request("/home", cookies: %{"pa_page_views" => ""})
+
+      assert conn.status == 200
+      assert_receive {:request_sent, %RequestLog{session_page_views: 1}}
+    end
+
+    test "a negative page views cookie restarts the count" do
+      request("/home", cookies: %{"pa_page_views" => "-5"})
+
+      assert_receive {:request_sent, %RequestLog{session_page_views: 1}}
+    end
+
+    test "an oversized page views cookie is capped" do
+      request("/home", cookies: %{"pa_page_views" => "99999999999999999999"})
+
+      # Left unbounded this reaches the database as a bignum and makes the whole
+      # batch insert fail, taking every other request in it down too.
+      assert_receive {:request_sent, %RequestLog{session_page_views: page_views}}
+      assert page_views <= 10_000
+    end
+
+    test "a trailing garbage page views cookie keeps the numeric prefix" do
+      request("/home", cookies: %{"pa_page_views" => "4abc"})
+
+      assert_receive {:request_sent, %RequestLog{session_page_views: 5}}
+    end
+  end
+
   describe ":before and :after plugs" do
     test "run around the tracking, in order" do
       conn =

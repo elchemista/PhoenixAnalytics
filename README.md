@@ -205,6 +205,10 @@ plug PhoenixAnalytics.Plugs.RequestTracker,
 | `:ignore_paths` | path prefixes or regexes never tracked |
 | `:session` | cookie names, `:max_age`, `:same_site`, `:secure`, `:http_only` |
 
+The session cookies are client controlled, so the page view counter is parsed
+defensively and capped: a malformed or oversized value restarts the count
+instead of failing the request or the insert batch behind it.
+
 Callbacks are `{module, function, args}` tuples because endpoints build plug
 options at compile time, where a closure cannot exist.
 

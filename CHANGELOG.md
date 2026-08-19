@@ -35,6 +35,23 @@ All notable changes to this project will be documented in this file.
 - `:cache_ttl` is now read at runtime instead of at compile time, so it can be
   set from `config/runtime.exs`, and a string value such as
   `System.get_env("CACHE_TTL")` no longer crashes on every cache write.
+- A malformed `pa_page_views` cookie made every request fail with a 500. The
+  cookie is client controlled, so any visitor could take a page down by setting
+  it; it is now parsed defensively.
+- An oversized `pa_page_views` cookie reached the database as a bignum and made
+  the whole insert batch fail, discarding up to `batch_size` unrelated requests
+  with it. Page views are now capped.
+- A cache outage made the dashboard render Cachex's error reason, such as
+  `:no_cache`, in place of the chart data.
+- The batcher dropped its pending batch on shutdown, losing up to `batch_size`
+  requests on every restart or deploy. It now flushes on terminate.
+- An unparseable date range or interval coming from the dashboard client left
+  every chart silently empty; both are now validated and the current value kept.
+- A malformed `:every` or `:at` in the snapshot configuration crashed the
+  scheduler in a restart loop, which took the host application down at boot; a
+  zero interval busy looped writing snapshots. Both now warn and fall back.
+- `PhoenixAnalytics.Store.ETS.info/1` reported timestamps with millisecond
+  precision while every stored `inserted_at` has second precision.
 
 ### 🔧 Improvements
 
@@ -48,6 +65,9 @@ All notable changes to this project will be documented in this file.
 
 - `PhoenixAnalytics.Config.get_cache_ttl/0` is now the single source of the
   cache TTL and its default is `120` seconds, the value the cache used before.
+- `c:PhoenixAnalytics.Store.import_all/2` returns how many logs were imported,
+  counting those already stored, so every adapter reports the same number on a
+  replay. The Ecto store previously returned only the newly inserted rows.
 
 ### ⚠️ Deprecations
 

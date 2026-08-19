@@ -86,6 +86,11 @@ defmodule PhoenixAnalytics.Plugs.RequestTracker do
 
   @cookie_keys [:max_age, :same_site, :secure, :http_only]
 
+  # The page views cookie is client controlled: it is parsed defensively and
+  # capped, so a malformed value cannot break the request and an oversized one
+  # cannot overflow an integer column and fail the whole insert batch.
+  @max_page_views 10_000
+
   @type options :: %{
           before: list(),
           after: list(),
@@ -146,7 +151,7 @@ defmodule PhoenixAnalytics.Plugs.RequestTracker do
     views_cookie_name = Keyword.fetch!(session, :views_cookie_name)
 
     session_id = conn.cookies[cookie_name] || Utility.uuid()
-    page_views = String.to_integer(conn.cookies[views_cookie_name] || "0") + 1
+    page_views = next_page_views(conn.cookies[views_cookie_name])
     cookie_opts = Keyword.take(session, @cookie_keys)
 
     conn
@@ -156,6 +161,16 @@ defmodule PhoenixAnalytics.Plugs.RequestTracker do
       &Map.merge(&1, %{session_id: session_id, page_views: page_views, started_at: started_at})
     )
   end
+
+  @spec next_page_views(term()) :: pos_integer()
+  defp next_page_views(cookie) when is_binary(cookie) do
+    case Integer.parse(cookie) do
+      {page_views, _rest} when page_views >= 0 -> min(page_views + 1, @max_page_views)
+      _other -> 1
+    end
+  end
+
+  defp next_page_views(_cookie), do: 1
 
   # Runs inside `before_send`: it must return the connection whatever happens.
   @spec emit(Plug.Conn.t(), options()) :: Plug.Conn.t()
