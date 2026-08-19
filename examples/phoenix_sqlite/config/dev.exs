@@ -12,6 +12,22 @@ config :phoenix_analytics,
   app_domain: System.get_env("PHX_HOST") || "localhost",
   cache_ttl: System.get_env("CACHE_TTL") || 0
 
+# Alternative setup: keep analytics in memory and snapshot them to disk, with no
+# database and no migration involved. Replace the block above with this one and
+# restart the server to try it end to end: browse the app, open the dashboard,
+# wait for a snapshot under tmp/snapshots, restart, and the data is still there.
+#
+#     config :phoenix_analytics,
+#       store: {PhoenixAnalytics.Store.ETS, retention_days: 30},
+#       app_domain: System.get_env("PHX_HOST") || "localhost",
+#       cache_ttl: 0,
+#       snapshot: [
+#         sink: {PhoenixAnalytics.Snapshot.Sink.Local, path: "tmp/snapshots"},
+#         every: {:minutes, 5},
+#         window: :since_last,
+#         restore: [days: 1]
+#       ]
+
 # For development, we disable any cache and enable
 # debugging and code reloading.
 #
