@@ -3,12 +3,9 @@ defmodule PhoenixAnalytics.Web.Live.Components.PopularChart do
 
   use PhoenixAnalytics.Web, :live_component
 
-  alias PhoenixAnalytics.Services.Cache
-  alias PhoenixAnalytics.Services.Telemetry
+  alias PhoenixAnalytics.Web.Data
 
-  alias PhoenixAnalytics.Queries.Analytics
-
-  @impl true
+  @impl Phoenix.LiveComponent
   def render(assigns) do
     ~H"""
     <div>
@@ -23,49 +20,19 @@ defmodule PhoenixAnalytics.Web.Live.Components.PopularChart do
     """
   end
 
-  @impl true
+  @impl Phoenix.LiveComponent
   def update(assigns, socket) do
-    data_source = assigns.source
-    date_range = assigns.date_range
-
-    # Check if date_range has changed
-    should_refresh = socket.assigns[:date_range] != date_range
-
+    %{source: source, date_range: date_range} = assigns
+    refresh? = socket.assigns[:date_range] != date_range
     socket = assign(socket, assigns)
 
-    if should_refresh do
+    if refresh? do
       {:ok,
        assign_async(socket, :chart_data, fn ->
-         {:ok, %{chart_data: chart_data(data_source, date_range)}}
+         {:ok, %{chart_data: Data.chart({:popular, source}, date_range)}}
        end)}
     else
       {:ok, socket}
-    end
-  end
-
-  defp chart_data(source, %{from: from, to: to} = _date_range) do
-    cache_key = "popular_chart:#{source}:#{from}:#{to}"
-
-    {_, value} = Cache.fetch(cache_key, fn -> fetch_data(source, from, to) end)
-
-    value
-  end
-
-  defp fetch_data(source, from, to) do
-    query =
-      case source do
-        :pages -> Analytics.popular_pages(from, to)
-        :referers -> Analytics.popular_referer(from, to)
-        :not_founds -> Analytics.popular_not_found(from, to)
-      end
-
-    try do
-      repo = PhoenixAnalytics.Config.get_repo()
-      repo.all(query)
-    rescue
-      error ->
-        Telemetry.log_error(:fetch_data, error)
-        []
     end
   end
 end

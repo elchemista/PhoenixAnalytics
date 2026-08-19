@@ -74,16 +74,33 @@ defmodule PhoenixAnalytics.Migration do
   For production environments with large tables, consider running PostgreSQL indexes manually with CONCURRENTLY.
   """
   def add_indexes do
+    database_type = PhoenixAnalytics.Store.Ecto.database_type()
+    database_name = database_type |> Atom.to_string() |> String.capitalize()
+    statements = index_statements(database_type)
+
     repo = PhoenixAnalytics.Config.get_repo()
-    database_type = PhoenixAnalytics.Services.Utility.database_type()
 
-    {if_not_exists, path_column} =
-      case database_type do
-        :mysql -> {"", "path(255)"}
-        _ -> {"IF NOT EXISTS ", "path"}
-      end
+    {successful, failures} =
+      statements
+      |> Enum.map(&run_index(repo, &1))
+      |> Enum.split_with(&match?({:ok, _statement}, &1))
 
-    indexes = [
+    IO.puts(
+      "#{database_name} indexes applied: #{length(successful)} successful, #{length(failures)} failed"
+    )
+
+    Enum.each(failures, &report_failure/1)
+
+    {:ok,
+     "#{database_name} indexes processed: #{length(successful)}/#{length(statements)} successful"}
+  end
+
+  # MySQL has no IF NOT EXISTS on CREATE INDEX and needs a prefix length on TEXT columns.
+  @spec index_statements(:postgres | :sqlite | :mysql) :: [String.t()]
+  defp index_statements(database_type) do
+    {if_not_exists, path_column} = index_dialect(database_type)
+
+    [
       "CREATE INDEX #{if_not_exists}idx_requests_inserted_at ON requests (inserted_at);",
       "CREATE INDEX #{if_not_exists}idx_requests_session_id ON requests (session_id);",
       "CREATE INDEX #{if_not_exists}idx_requests_status_code ON requests (status_code);",
@@ -93,37 +110,28 @@ defmodule PhoenixAnalytics.Migration do
       "CREATE INDEX #{if_not_exists}idx_requests_date_status ON requests (inserted_at, status_code);",
       "CREATE INDEX #{if_not_exists}idx_requests_date_method ON requests (inserted_at, method);"
     ]
-
-    results =
-      Enum.map(indexes, fn index_query ->
-        case repo.query(index_query) do
-          {:ok, _result} -> {:ok, index_query}
-          {:error, reason} -> {:error, {index_query, reason}}
-        end
-      end)
-
-    successful = Enum.count(results, &match?({:ok, _}, &1))
-    failed = Enum.count(results, &match?({:error, _}, &1))
-
-    database_name = database_type |> Atom.to_string() |> String.capitalize()
-    IO.puts("#{database_name} indexes applied: #{successful} successful, #{failed} failed")
-
-    if failed > 0 do
-      failed_queries = Enum.filter(results, &match?({:error, _}, &1))
-
-      Enum.each(failed_queries, fn {:error, {query, reason}} ->
-        reason_str =
-          case reason do
-            %{message: msg} when is_binary(msg) -> msg
-            %{postgres: %{message: msg}} when is_binary(msg) -> msg
-            %{mysql: %{message: msg}} when is_binary(msg) -> msg
-            _ -> inspect(reason)
-          end
-
-        IO.puts("Failed index: #{String.slice(query, 0, 80)}... - #{reason_str}")
-      end)
-    end
-
-    {:ok, "#{database_name} indexes processed: #{successful}/#{length(indexes)} successful"}
   end
+
+  @spec index_dialect(:postgres | :sqlite | :mysql) :: {String.t(), String.t()}
+  defp index_dialect(:mysql), do: {"", "path(255)"}
+  defp index_dialect(_database_type), do: {"IF NOT EXISTS ", "path"}
+
+  @spec run_index(module(), String.t()) :: {:ok, String.t()} | {:error, {String.t(), term()}}
+  defp run_index(repo, statement) do
+    case repo.query(statement) do
+      {:ok, _result} -> {:ok, statement}
+      {:error, reason} -> {:error, {statement, reason}}
+    end
+  end
+
+  @spec report_failure({:error, {String.t(), term()}}) :: :ok
+  defp report_failure({:error, {statement, reason}}) do
+    IO.puts("Failed index: #{String.slice(statement, 0, 80)}... - #{failure_reason(reason)}")
+  end
+
+  @spec failure_reason(term()) :: String.t()
+  defp failure_reason(%{postgres: %{message: message}}) when is_binary(message), do: message
+  defp failure_reason(%{mysql: %{message: message}}) when is_binary(message), do: message
+  defp failure_reason(%{message: message}) when is_binary(message), do: message
+  defp failure_reason(reason), do: inspect(reason)
 end

@@ -17,8 +17,9 @@ Phoenix Analytics is embedded plug and play tool designed for Phoenix applicatio
 
 Key features:
 - ⚡️ Lightweight and fast analytics tracking
-- 🗄️ Flexible database support (PostgreSQL, SQLite3, MySQL)
-- 🔌 Easy integration with Phoenix applications
+- 🗄️ Flexible storage: PostgreSQL, SQLite3, MySQL, in-memory ETS, or your own adapter
+- 📦 Periodic snapshots to S3 or to any sink you plug in
+- 🔌 Easy integration with Phoenix applications, with an extensible tracking plug
 - 📊 Minimalistic dashboard for data visualization
 - 🎨 12 customizable color themes
 - 🌙 Full dark mode support across all themes
@@ -49,6 +50,8 @@ config :phoenix_analytics,
   app_domain: System.get_env("PHX_HOST") || "example.com",
   cache_ttl: System.get_env("CACHE_TTL") || 60
 ```
+
+See [Stores](#stores) to keep analytics out of your database entirely.
 
 ### Migration
 
@@ -101,6 +104,147 @@ phoenix_analytics_dashboard "/analytics"
 
 > [!WARNING]
 > ‼️ Please test thoroughly before proceeding to production!
+
+## Stores
+
+Storage is pluggable. `repo:` above is shorthand for the Ecto store; the full
+form lets you pick another adapter:
+
+```elixir
+# Your database, through your existing repo (default)
+config :phoenix_analytics, store: {PhoenixAnalytics.Store.Ecto, repo: MyApp.Repo}
+
+# In memory, no database at all
+config :phoenix_analytics,
+  store: {PhoenixAnalytics.Store.ETS, retention_days: 30, max_entries: 2_000_000},
+  cache_ttl: 0
+```
+
+| | `Store.Ecto` | `Store.ETS` |
+| --- | --- | --- |
+| Storage | your database | node memory (~0.5-1 KB per request) |
+| Survives a restart | yes | only what was snapshotted |
+| Multiple nodes | shared | one data set per node |
+| Migrations | required | none |
+| Dashboard reads | SQL | in-memory folds, no query cost |
+
+With the ETS store, keep memory bounded with `:retention_days` and
+`:max_entries`, check `PhoenixAnalytics.Store.info/0` for current usage, and add
+[snapshots](#snapshots) for durability.
+
+Writing your own store means implementing the `PhoenixAnalytics.Store`
+behaviour, one callback per analytics operation, and pointing the config at it:
+
+```elixir
+config :phoenix_analytics, store: {MyApp.AnalyticsStore, url: "..."}
+```
+
+## Snapshots
+
+Any store implementing the optional `export/3` callback can be snapshotted on a
+schedule, which is what gives the ETS store durability and what archives older
+rows out of a database:
+
+```elixir
+config :phoenix_analytics,
+  snapshot: [
+    sink: {PhoenixAnalytics.Snapshot.Sink.S3, bucket: "my-analytics", region: "eu-west-1"},
+    every: :day,             # :day | {:hours, n} | {:minutes, n} | :manual
+    at: ~T[03:00:00],        # UTC
+    window: :previous_day,   # :previous_day | :since_last | :all
+    format: :etf,            # :etf to restore, :jsonl for Athena/DuckDB/BigQuery
+    gzip: true,
+    run_on: :all,            # :all | {:node, :"app@host"} | {Mod, :fun, []}
+    restore: [days: 7]       # reload recent snapshots at boot (ETS store)
+  ]
+```
+
+The S3 sink needs [ExAws](https://hex.pm/packages/ex_aws) in your application:
+
+```elixir
+{:ex_aws, "~> 2.5"}, {:ex_aws_s3, "~> 2.5"}, {:req, "~> 0.5"}, {:sweet_xml, "~> 0.7"}
+```
+
+For development, or for hosts with a backed up volume, write to disk instead:
+
+```elixir
+sink: {PhoenixAnalytics.Snapshot.Sink.Local, path: "tmp/snapshots"}
+```
+
+With `every: :manual` nothing is scheduled and you trigger the export yourself,
+for example from an Oban job:
+
+```elixir
+PhoenixAnalytics.Snapshot.run(from, to, Application.get_env(:phoenix_analytics, :snapshot))
+```
+
+Any other destination is a `PhoenixAnalytics.Snapshot.Sink` implementation:
+`put/3`, `get/2`, `list/2` and `delete/2`.
+
+## Customizing the tracker
+
+`PhoenixAnalytics.Plugs.RequestTracker` takes options when you need more control
+than plug and play:
+
+```elixir
+plug PhoenixAnalytics.Plugs.RequestTracker,
+  before: [MyApp.Plugs.ConsentCheck, {MyApp.Plugs.BotFilter, min_score: 3}],
+  after: [MyApp.Plugs.AnalyticsHeaders],
+  filter: {MyApp.Analytics, :track?, []},
+  transform: {MyApp.Analytics, :enrich, []},
+  ignore_paths: ["/health", "/metrics", ~r{^/admin/}],
+  session: [cookie_name: "pa_session_id", max_age: 300, same_site: "Lax"]
+```
+
+| Option | Purpose |
+| --- | --- |
+| `:before` | plugs run before tracking starts |
+| `:after` | plugs run once tracking is armed, with the session available |
+| `:filter` | `{Mod, :fun, args}` receiving the conn; `false` skips the request |
+| `:transform` | `{Mod, :fun, args}` receiving the log and the conn; `nil` drops it |
+| `:ignore_paths` | path prefixes or regexes never tracked |
+| `:session` | cookie names, `:max_age`, `:same_site`, `:secure`, `:http_only` |
+
+The session cookies are client controlled, so the page view counter is parsed
+defensively and capped: a malformed or oversized value restarts the count
+instead of failing the request or the insert batch behind it.
+
+Callbacks are `{module, function, args}` tuples because endpoints build plug
+options at compile time, where a closure cannot exist.
+
+A `:before` plug decides whether the request is tracked at all:
+
+```elixir
+defmodule MyApp.Plugs.ConsentCheck do
+  @behaviour Plug
+
+  import PhoenixAnalytics.Plugs
+
+  @impl Plug
+  def init(opts), do: opts
+
+  @impl Plug
+  def call(conn, _opts) do
+    if analytics_consent?(conn), do: conn, else: skip(conn)
+  end
+end
+```
+
+And a `:transform` callback enriches or drops the log before it is stored:
+
+```elixir
+defmodule MyApp.Analytics do
+  def track?(conn), do: not bot?(conn)
+
+  def enrich(log, conn) do
+    if internal?(conn), do: nil, else: %{log | path: normalize(log.path)}
+  end
+end
+```
+
+Tracking emits `[:phoenix_analytics, :request, :tracked]` and
+`[:phoenix_analytics, :request, :skipped]` telemetry events, and never lets an
+error reach the request.
 
 ## Documentation
 
@@ -170,9 +314,13 @@ Script can be found here: `vegeta/vegeta.sh`
 
 ## For whom this library
 
-- [x] Single instance Phoenix app (any supported database)
+- [x] Single instance Phoenix app (any supported database, or the ETS store)
 - [x] Multiple instances of Phoenix app **without** auto scaling group (any supported database)
 - [x] Multiple instances of Phoenix app **with** auto scaling group (PostgreSQL or MySQL)
+
+> The ETS store keeps one data set per node, so on multiple instances each node
+> reports its own traffic. Use a shared database, or snapshot each node with the
+> node name in the key, when you need a single view.
 
 ### Heavily inspired by
 

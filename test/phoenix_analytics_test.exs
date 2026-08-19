@@ -385,7 +385,7 @@ defmodule PhoenixAnalyticsTest do
       results = TestRepo.all(query)
       
       # Should return pages ordered by visit count 
-      assert length(results) > 0
+      assert match?([_ | _], results)
       
       # All results should have path and visits count
       Enum.each(results, fn result ->
@@ -457,7 +457,7 @@ defmodule PhoenixAnalyticsTest do
       results = TestRepo.all(query)
       
       # Should return device types from successful non-page requests
-      assert length(results) > 0
+      assert match?([_ | _], results)
       
       # Verify structure and find desktop/mobile devices
       Enum.each(results, fn result ->
@@ -552,7 +552,7 @@ defmodule PhoenixAnalyticsTest do
       results = TestRepo.all(query)
       
       # Should return pages ordered by average duration
-      assert length(results) > 0
+      assert match?([_ | _], results)
       
       # Verify structure
       Enum.each(results, fn result ->

@@ -58,7 +58,7 @@ defmodule PhoenixAnalytics.Queries.Analytics.Stats.Stat do
       when interval in @valid_intervals do
     # This is a complex query that calculates session duration
     # Check database type for compatibility
-    database_type = PhoenixAnalytics.Services.Utility.database_type()
+    database_type = PhoenixAnalytics.Store.Ecto.database_type()
 
     session_durations =
       case database_type do

@@ -49,7 +49,7 @@ defmodule PhoenixAnalytics.Queries.Analytics.Stats.PerPeriod do
       when interval in @valid_intervals do
     # Calculate session duration by finding min/max timestamps per session
     # Check database type for compatibility
-    database_type = PhoenixAnalytics.Services.Utility.database_type()
+    database_type = PhoenixAnalytics.Store.Ecto.database_type()
 
     session_durations =
       case database_type do

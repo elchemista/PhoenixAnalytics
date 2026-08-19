@@ -86,16 +86,12 @@ defmodule PhoenixAnalytics.Services.Utility do
   @doc """
   Determines the current database type based on configuration.
 
-  This function checks the application environment for database configurations
-  to determine the current database type being used.
-
   ## Returns
 
   An atom indicating the database type:
     * `:postgres` if PostgreSQL is configured
     * `:sqlite` if SQLite is configured
     * `:mysql` if MySQL is configured
-    * `:postgres` as a fallback if no valid configuration is found
 
   ## Examples
 
@@ -103,20 +99,9 @@ defmodule PhoenixAnalytics.Services.Utility do
       :postgres
 
   """
-  def database_type() do
-    # Get the repo from config and check its adapter
-    repo = PhoenixAnalytics.Config.get_repo()
-
-    cond do
-      repo && repo.__adapter__() == Ecto.Adapters.SQLite3 -> :sqlite
-      repo && repo.__adapter__() == Ecto.Adapters.Postgres -> :postgres
-      repo && repo.__adapter__() == Ecto.Adapters.MyXQL -> :mysql
-      has_config?(:postgres_conn) -> :postgres
-      has_config?(:sqlite_path) -> :sqlite
-      has_config?(:mysql_conn) -> :mysql
-      true -> :postgres
-    end
-  end
+  @deprecated "Use PhoenixAnalytics.Store.Ecto.database_type/0 instead"
+  @spec database_type() :: :postgres | :sqlite | :mysql
+  def database_type, do: PhoenixAnalytics.Store.Ecto.database_type()
 
   @doc """
   Checks if a specific configuration key exists and has a value.
@@ -135,11 +120,11 @@ defmodule PhoenixAnalytics.Services.Utility do
       true
 
   """
+  @spec has_config?(atom()) :: boolean()
   def has_config?(key) do
     case get_config(key) do
-      :error -> false
       nil -> false
-      _ -> true
+      _value -> true
     end
   end
 
@@ -161,6 +146,7 @@ defmodule PhoenixAnalytics.Services.Utility do
       10
 
   """
+  @spec get_config(atom(), term()) :: term()
   def get_config(key, default \\ nil) do
     case Application.fetch_env(:phoenix_analytics, key) do
       {:ok, value} -> value
@@ -168,6 +154,8 @@ defmodule PhoenixAnalytics.Services.Utility do
     end
   end
 
-  # Legacy function for backward compatibility
-  def mode(), do: database_type()
+  @doc "Legacy alias of `database_type/0`."
+  @deprecated "Use PhoenixAnalytics.Store.Ecto.database_type/0 instead"
+  @spec mode() :: :postgres | :sqlite | :mysql
+  def mode, do: PhoenixAnalytics.Store.Ecto.database_type()
 end
