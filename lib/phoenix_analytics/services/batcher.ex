@@ -77,6 +77,9 @@ defmodule PhoenixAnalytics.Services.Batcher do
   @doc false
   @impl GenServer
   def init(_args) do
+    # Trapping exits lets terminate/2 run on shutdown, so a partially filled
+    # batch is written instead of being lost on every restart or deploy.
+    Process.flag(:trap_exit, true)
     PubSub.subscribe()
 
     options = Config.batcher()
@@ -119,6 +122,14 @@ defmodule PhoenixAnalytics.Services.Batcher do
     else
       {:noreply, state}
     end
+  end
+
+  @doc false
+  @impl GenServer
+  def terminate(_reason, state) do
+    flush(state)
+
+    :ok
   end
 
   @doc """
